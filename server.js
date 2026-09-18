@@ -298,54 +298,93 @@ io.on('connection', (socket) => {
 //#region console key input handling
 
 
-process.stdin.on('keypress',(str,key) => {
-
-    switch(str)
-    {
-        case 'q':
-            CloseServer();
-            break;
-    }
-});
+if (process.stdin.isTTY) {
+    process.stdin.on("keypress", (str, key) => {
+        switch (str) {
+            case "q":
+                CloseServer();
+                break;
+        }
+    });
+}
 
 //#endregion
 
 //#region function definitions
-function Update_Integration_Webhook_URL()
-{
-    if (localtunnelused)
-    {
-        if(tunnel.url)
-        {
-            publicurldomain = tunnel.url;
-            currenturl = tunnel.url + "/openmessagingwebhook";
-        }
+function Update_Integration_Webhook_URL() {
+    // Render / other production hosting
+    if (process.env.PUBLIC_URL) {
+        publicurldomain = process.env.PUBLIC_URL.replace(/\/+$/, "");
     }
-    else
-    {
-        currenturl = "https://" + process.env.CODESPACE_NAME + "-3000." + process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN + "/openmessagingwebhook";
-        publicurldomain = "https://" + process.env.CODESPACE_NAME + "-3000." + process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN;
+    // Local development using localtunnel
+    else if (localtunnelused && tunnel && tunnel.url) {
+        publicurldomain = tunnel.url.replace(/\/+$/, "");
     }
-    
+    // GitHub Codespaces
+    else if (
+        process.env.CODESPACE_NAME &&
+        process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN
+    ) {
+        publicurldomain =
+            "https://" +
+            process.env.CODESPACE_NAME +
+            "-3000." +
+            process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN;
+    }
+    else {
+        Logger(
+            "ERROR",
+            "Cannot determine public URL. Set PUBLIC_URL environment variable."
+        );
+        return;
+    }
 
-    var body = {
-        "outboundNotificationWebhookUrl":currenturl
+    currenturl = publicurldomain + "/openmessagingwebhook";
+
+    const body = {
+        outboundNotificationWebhookUrl: currenturl
     };
-    
-    conversationapi.patchConversationsMessagingIntegrationsOpenIntegrationId(openmessagingintegrationid, body)
-    .then((data) => {
-        Logger("INFO","Updated Integration Webhook URL to " + data.outboundNotificationWebhookUrl);
 
-    });
+    Logger("INFO", "Updating Genesys webhook to " + currenturl);
+
+    conversationapi
+        .patchConversationsMessagingIntegrationsOpenIntegrationId(
+            openmessagingintegrationid,
+            body
+        )
+        .then((data) => {
+            Logger(
+                "INFO",
+                "Updated Integration Webhook URL to " +
+                    data.outboundNotificationWebhookUrl
+            );
+        })
+        .catch((err) => {
+            Logger(
+                "ERROR",
+                "Failed to update Integration Webhook URL: " + err
+            );
+        });
 }
+function CloseServer() {
+    Logger("END", "Shutting down web server...");
 
-function CloseServer()
-{
-    server.closeAllConnections();
-    server.close();
-    if(localtunnel) tunnel.close();
-    Logger("END","Web Server closed!");
-    process.exit();
+    if (tunnel && typeof tunnel.close === "function") {
+        tunnel.close();
+    }
+
+    if (typeof server.closeAllConnections === "function") {
+        server.closeAllConnections();
+    }
+
+    server.close(() => {
+        Logger("END", "Web server closed");
+        process.exit(0);
+    });
+
+    setTimeout(() => {
+        process.exit(0);
+    }, 5000).unref();
 }
 
 function Logger(state, data){
@@ -378,74 +417,216 @@ function SendReceiptToOrg(recvdmessagejson) {
   });
 }
 
-function main()
-{
+async function main() {
+    /*
+     * ---------------------------------------------------------
+     * Interactive console
+     * ---------------------------------------------------------
+     *
+     * process.stdin.setRawMode() exists when Node is attached
+     * to a TTY. Render does not provide one.
+     */
+    if (
+        process.stdin.isTTY &&
+        typeof process.stdin.setRawMode === "function"
+    ) {
+        process.stdin.setRawMode(true);
+        readline.emitKeypressEvents(process.stdin);
 
-    process.stdin.setRawMode(true);
-    readline.emitKeypressEvents(process.stdin);
+        Logger("INFO", "Interactive console enabled");
+    } else {
+        Logger(
+            "INFO",
+            "No interactive terminal detected; keyboard controls disabled"
+        );
+    }
 
-    switch (process.env.AWS_REGION)
-    {
+    /*
+     * ---------------------------------------------------------
+     * Genesys Cloud region
+     * ---------------------------------------------------------
+     */
+    switch (process.env.AWS_REGION) {
         case "eu-west-1":
-            apiclient.setEnvironment(platformclient.PureCloudRegionHosts.eu_west_1);
+            apiclient.setEnvironment(
+                platformclient.PureCloudRegionHosts.eu_west_1
+            );
             break;
+
         case "eu-west-2":
-            apiclient.setEnvironment(platformclient.PureCloudRegionHosts.eu_west_2);
+            apiclient.setEnvironment(
+                platformclient.PureCloudRegionHosts.eu_west_2
+            );
             break;
+
         case "eu-central-1":
-            apiclient.setEnvironment(platformclient.PureCloudRegionHosts.eu_central_1);
+            apiclient.setEnvironment(
+                platformclient.PureCloudRegionHosts.eu_central_1
+            );
             break;
+
         case "eu-central-2":
-            apiclient.setEnvironment(platformclient.PureCloudRegionHosts.eu_central_2);
+            apiclient.setEnvironment(
+                platformclient.PureCloudRegionHosts.eu_central_2
+            );
             break;
+
         case "us-west-2":
-            apiclient.setEnvironment(platformclient.PureCloudRegionHosts.us_west_2);
+            apiclient.setEnvironment(
+                platformclient.PureCloudRegionHosts.us_west_2
+            );
             break;
+
         default:
-            apiclient.setEnvironment(platformclient.PureCloudRegionHosts.us_east_1);
+            Logger(
+                "INFO",
+                "Unknown/missing AWS_REGION; defaulting to us-east-1"
+            );
+
+            apiclient.setEnvironment(
+                platformclient.PureCloudRegionHosts.us_east_1
+            );
             break;
     }
 
-    server.listen(3000, () => {
-        Logger("START","web server listening on http://localhost:3000");
+    /*
+     * ---------------------------------------------------------
+     * Validate required configuration
+     * ---------------------------------------------------------
+     */
+    const requiredVariables = [
+        "OAUTH_ID",
+        "OAUTH_PW",
+        "INTEGRATION_ID",
+        "INTEGRATION_SECRET"
+    ];
+
+    const missingVariables = requiredVariables.filter(
+        (name) => !process.env[name]
+    );
+
+    if (missingVariables.length > 0) {
+        Logger(
+            "ERROR",
+            "Missing required environment variables: " +
+                missingVariables.join(", ")
+        );
+
+        process.exit(1);
+    }
+
+    /*
+     * ---------------------------------------------------------
+     * Start web server
+     * ---------------------------------------------------------
+     *
+     * Render supplies PORT automatically.
+     */
+    const PORT = Number(process.env.PORT) || 3000;
+
+    server.listen(PORT, "0.0.0.0", () => {
+        Logger(
+            "START",
+            "Web server listening on 0.0.0.0:" + PORT
+        );
     });
 
-    apiclient.loginClientCredentialsGrant(process.env.OAUTH_ID, process.env.OAUTH_PW)
-            .then(() => {
-                Logger("START","Platform API initialized successfully.")
-                conversationapi = new platformclient.ConversationsApi();
-                
-                if (!process.env.CODESPACES)
-                {
-                    (async () => {
-                        tunnel = await localtunnel({port:3000});
-            
-                        Logger("START","Local tunnel open: " +  tunnel.url);
-                        localtunnelused = true;
-                        if(conversationapi)
-                            Update_Integration_Webhook_URL();
-                        
-                        tunnel.on('close',() => {
-                        });
-            
-            
-                    })();
-                }
-                else {
-                    if(conversationapi)
-                     Update_Integration_Webhook_URL();
-                }
-            
-            })
-            .catch((err) => {
-                Logger("ERROR","Platform API initialization failed " + err);
+    /*
+     * ---------------------------------------------------------
+     * Genesys authentication
+     * ---------------------------------------------------------
+     */
+    try {
+        await apiclient.loginClientCredentialsGrant(
+            process.env.OAUTH_ID,
+            process.env.OAUTH_PW
+        );
+
+        Logger(
+            "START",
+            "Platform API initialized successfully"
+        );
+
+        conversationapi =
+            new platformclient.ConversationsApi();
+
+        /*
+         * -----------------------------------------------------
+         * Render / production
+         * -----------------------------------------------------
+         */
+        if (process.env.PUBLIC_URL) {
+            publicurldomain =
+                process.env.PUBLIC_URL.replace(/\/+$/, "");
+
+            Logger(
+                "START",
+                "Using configured public URL: " +
+                    publicurldomain
+            );
+
+            Update_Integration_Webhook_URL();
+            return;
+        }
+
+        /*
+         * -----------------------------------------------------
+         * GitHub Codespaces
+         * -----------------------------------------------------
+         */
+        if (process.env.CODESPACES) {
+            Logger(
+                "START",
+                "GitHub Codespaces detected"
+            );
+
+            Update_Integration_Webhook_URL();
+            return;
+        }
+
+        /*
+         * -----------------------------------------------------
+         * Local development
+         * -----------------------------------------------------
+         */
+        Logger(
+            "START",
+            "No PUBLIC_URL detected; starting LocalTunnel"
+        );
+
+        try {
+            tunnel = await localtunnel({
+                port: PORT
             });
 
+            localtunnelused = true;
 
- 
+            Logger(
+                "START",
+                "Local tunnel open: " + tunnel.url
+            );
 
+            Update_Integration_Webhook_URL();
 
-    
+            tunnel.on("close", () => {
+                Logger(
+                    "INFO",
+                    "LocalTunnel connection closed"
+                );
+            });
+        } catch (tunnelError) {
+            Logger(
+                "ERROR",
+                "Unable to start LocalTunnel: " +
+                    tunnelError
+            );
+        }
+    } catch (err) {
+        Logger(
+            "ERROR",
+            "Platform API initialization failed: " + err
+        );
+    }
 }
 
 //#endregion
