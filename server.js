@@ -622,11 +622,29 @@ async function main() {
             );
         }
     } catch (err) {
+    Logger(
+        "ERROR",
+        "Platform API initialization failed"
+    );
+
+    if (err.response) {
         Logger(
             "ERROR",
-            "Platform API initialization failed: " + err
+            "HTTP Status: " + err.response.status
+        );
+
+        Logger(
+            "ERROR",
+            "Response: " +
+            JSON.stringify(err.response.data)
+        );
+    } else {
+        Logger(
+            "ERROR",
+            err.message || String(err)
         );
     }
+}
 }
 
 //#endregion
